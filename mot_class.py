@@ -104,7 +104,7 @@ class mot_class():
                 "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
                 "dog", "horse", "motorbike", "person", "pottedplant", "sheep",
                 "sofa", "train", "tvmonitor"]
-    __vs = 0
+    #__vs = 0
 
     def __init__(self, args):
 
@@ -113,12 +113,12 @@ class mot_class():
 
          # initialize the video stream and output video writer
         print("[INFO] starting video stream...")
-        self.__vs = cv2.VideoCapture(args["video"])
+        vs = cv2.VideoCapture(args["video"])
     
         # step 1. grab the frame dimensions and convert the frame to a blob
         # step 2. detecting how many people on this frame
         # step 1:
-        (grabbed, frame) = self.__vs.read()
+        (grabbed, frame) = vs.read()
         frame = imutils.resize(frame, width=self.__frame_size_width)
         (h, w) = frame.shape[:2]
         blob = cv2.dnn.blobFromImage(frame, 0.007843, (w, h), 127.5)
@@ -153,14 +153,14 @@ class mot_class():
 
     # tracking person on the video
     def tracking(self, args):
+        vs = cv2.VideoCapture(args["video"])
         if self.__print_number_test_not_tracker == False:
-            #vs = cv2.VideoCapture(args["video"])
             if self.__detect_people_qty >= (os.cpu_count()-1):
                 pool = Pool(os.cpu_count()-1)
             else:
                 pool = Pool(processes = self.__detect_people_qty)
         else:
-            pool = Pool(11)
+            pool = Pool(3)
 
         # loop over frames from the video file stream
         while True:
@@ -168,11 +168,11 @@ class mot_class():
 	    # grab the next frame from the video file
             if self.__detection_ok == True:
                 #vs = cv2.VideoCapture(args["video"])
-                (grabbed, frame) = self.__vs.read()
+                (grabbed, frame) = vs.read()
                 print("vs read ok")
 	        # check to see if we have reached the end of the video file
-                if frame is None:
-                    break
+                #if frame is None:
+                    #break
             else:
                 frame = self.__now_frame
                 self.__detection_ok = True
@@ -180,7 +180,7 @@ class mot_class():
             frame = imutils.resize(frame, width=self.__frame_size_width)
             if self.__print_number_test_not_tracker == True:
                 print("map_test...")
-                pool.map(self.map_test, [1,2,3,4,5,6,7,8,9,10,11])
+                pool.map(self.map_test, [1,2,3])
                 print("map_test ok")
             else:
                 input_data = []
@@ -204,7 +204,7 @@ class mot_class():
                     cv2.rectangle(frame, (startX, startY), (endX, endY),(0, 255, 0), 2)
                     cv2.putText(frame, "preson", (startX, startY - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
 
-            #print("before imshow")
+            print("before imshow")
             cv2.imshow("Frame", frame)
             key = cv2.waitKey(1) & 0xFF
 
@@ -216,13 +216,13 @@ class mot_class():
             self.__fps.update()
 
         # stop the timer and display FPS information
-        self.__fps.stop()
+        #self.__fps.stop()
         print("[INFO] elapsed time: {:.2f}".format(self.__fps.elapsed()))
         print("[INFO] approx. FPS: {:.2f}".format(self.__fps.fps()))
 
         # do a bit of cleanup
-        cv2.destroyAllWindows()
-        self.__vs.release()
+        #cv2.destroyAllWindows()
+        #self.__vs.release()
         pool.close()
         pool.join()
 
