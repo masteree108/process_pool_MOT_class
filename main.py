@@ -26,7 +26,3 @@ if __name__ == '__main__':
     # load our serialized model from disk                                   
     mc = mtc.mot_class(args)
     mc.tracking(args)
-    #try:
-        #mc.tracking(args)
-    #except:            
-        #print("ng") 
