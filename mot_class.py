@@ -7,7 +7,7 @@
 
 # import the necessary packages
 from imutils.video import FPS
-from multiprocessing import Pool
+import multiprocessing
 import numpy as np
 import argparse
 import imutils
@@ -19,7 +19,6 @@ class mot_class():
 #private
 
     # for saving tracker objects
-    __cv_multi_tracker_list = []
     # detected flag
     __detection_ok = False
     # if below variable set to True, this result will not show tracking bbox on the video
@@ -83,7 +82,7 @@ class mot_class():
         return person_num, bboxes
 
 
-    def __init_cv_multi_tracker(self, frame, bboxes, detect_people_qty, using_processor_qty):
+    def __assign_amount_of_people_for_tracker(self, detect_people_qty, using_processor_qty):
         # it should brings (left, top, width, height) to tracker.init() function
         # parameters are left, top , right and bottom in the box 
         # so those parameters need to minus like below to get width and height 
@@ -97,22 +96,14 @@ class mot_class():
             task_ct = 0                            
             tracker = cv2.MultiTracker_create()    
             for j in range(process_num_ct, process_num_ct + process_num):
-                #print("j:%d" % j)                 
-                bbox =(bboxes[j][0], bboxes[j][1] ,abs(bboxes[j][0]-bboxes[j][2]), abs(bboxes[j][1]-bboxes[j][3]))
-                #print("bbox:")                                                                                                                         
-                #print(bbox)                       
-                tracker.add(self.__get_algorithm_tracker("CSRT"), frame, bbox) 
                 task_ct = task_ct + 1              
                 process_num_ct = process_num_ct + 1
-            self.__cv_multi_tracker_list.append(tracker)  
             processor_task_num.append(task_ct)     
         if left_num != 0:                          
             counter = 0                            
             k = detect_people_qty - using_processor_qty * process_num
             for k in range(k, k+left_num):         
                 #print("k:%d" % k)                 
-                bbox =(bboxes[k][0], bboxes[k][1] ,abs(bboxes[k][0]-bboxes[k][2]), abs(bboxes[k][1]-bboxes[k][3]))
-                self.__cv_multi_tracker_list[counter].add(get_algorithm_tracker("CSRT"),frame , bbox)
                 processor_task_num[counter] = processor_task_num[counter] + 1
                 counter = counter + 1       
         #print("processor_task_number:")    
@@ -139,16 +130,36 @@ class mot_class():
         blob = cv2.dnn.blobFromImage(frame, 0.007843, (w, h), 127.5)
         net.setInput(blob)
         detections = net.forward()
+
+        self.inputQueues = []
+        self.outputQueues = []
+
         # step 2:
         self.__detect_people_qty = 0
         if self.__print_number_test_not_tracker == False:
             self.__detect_people_qty, bboxes= self.__detect_people_quantity(frame, detections, args, w, h)
             if self.__detect_people_qty >= (os.cpu_count()-1):
                 using_processor_qty = os.cpu_count()-1
-                self.__processor_task_num = self.__init_cv_multi_tracker(frame, bboxes, self.__detect_people_qty, using_processor_qty)
             else:       
                 using_processor_qty = self.__detect_people_qty
-                self.__processor_task_num  = self.__init_cv_multi_tracker(frame, bboxes, self.__detect_people_qty, using_processor_qty)
+
+            self.__processor_task_num  = self.__assign_amount_of_people_for_tracker(self.__detect_people_qty, using_processor_qty)
+            ct = 0
+            for i in range(using_processor_qty):
+                bboxes_for_trackers = []
+                for j in range(int(self.__processor_task_num[i])):
+                    bboxes_for_trackers.append(bboxes[ct])
+                    ct += 1
+                iq = multiprocessing.Queue()
+                oq = multiprocessing.Queue()
+                self.inputQueues.append(iq)
+                self.outputQueues.append(oq)
+
+                processes = multiprocessing.Process(
+                            target = self.start_tracker,
+                            args = (frame, bboxes_for_trackers, iq, oq))
+                processes.daemon = True
+                processes.start()
 
             print("detect_people_qty: %d" % self.__detect_people_qty) 
             print("processor_task_num") 
@@ -165,42 +176,35 @@ class mot_class():
         cv2.waitKey(0)
         '''
 
-    def start_tracker(self, input_data):    
-        bboxes_org = []               
-        bboxes_transfer = []          
-        n_frame = 0                   
-        n_tracker = 1                 
-                                  
-        tl_num = input_data[n_tracker]                                                                                                                              
-        #print("start_tracker, track_list[%d]" % tl_num)
-                                  
-        ok, bboxes_org = self.__cv_multi_tracker_list[tl_num].update(input_data[n_frame])
-        #print(bboxes_org)            
-        for box in bboxes_org:        
-            startX = int(box[0])                                      
-            startY = int(box[1])      
-            endX = int(box[0] + box[2])           
-            endY = int(box[1] + box[3])
-            bbox = (startX, startY, endX, endY)   
-            bboxes_transfer.append(bbox)
-            #print(bbox)              
-        return bboxes_transfer   
 
-    # for pool testing 
-    def map_test(self, i):
-        print(i)
+    def start_tracker(self, frame, bboxes, inputQueue, outputQueue):
+        #print("start_tracker")
+        tracker = cv2.MultiTracker_create()
+        for i,bbox in enumerate(bboxes):
+            mbbox =(bbox[0], bbox[1] ,abs(bbox[0]-bbox[2]), abs(bbox[1]-bbox[3]))
+            tracker.add(self.__get_algorithm_tracker("CSRT"), frame, mbbox)
+
+        while True:
+            bboxes_org = []               
+            bboxes_transfer = []          
+            frame = inputQueue.get()
+            #print("receive frame")
+            ok, bboxes_org = tracker.update(frame)
+
+            for box in bboxes_org:        
+                startX = int(box[0])                                      
+                startY = int(box[1])      
+                endX = int(box[0] + box[2])           
+                endY = int(box[1] + box[3])
+                bbox = (startX, startY, endX, endY)   
+                bboxes_transfer.append(bbox)
+
+            outputQueue.put(bboxes_transfer)
 
     # tracking person on the video
     def tracking(self, args):
         vs = cv2.VideoCapture(args["video"])
-        if self.__print_number_test_not_tracker == False:
-            if self.__detect_people_qty >= (os.cpu_count()-1):
-                pool = Pool(os.cpu_count()-1)
-            else:
-                pool = Pool(processes = self.__detect_people_qty)
-        else:
-            pool = Pool(3)
-
+        #print("tracking")
         # loop over frames from the video file stream
         while True:
             
@@ -216,36 +220,20 @@ class mot_class():
                 self.__detection_ok = True
         
             frame = imutils.resize(frame, width=self.__frame_size_width)
-            if self.__print_number_test_not_tracker == True:
-                print("map_test...")
-                pool.map(self.map_test, [1,2,3])
-                print("map_test ok")
-            else:
-                input_data = []
-                for i in range(self.__detect_people_qty):
-                    input_data.append([])
-                    input_data[i].append(frame)
-                    input_data[i].append(i)
+            for i,iq in enumerate(self.inputQueues):
+                iq.put(frame)
 
-                # can not use map_async,otherwise it will not wait all trackers to finish the job,
-                # it will just executing print("before operating cv2") directly
-                #pool_output = pool.map_async(start_tracker, input_data)     
-                #pool.close()
-                #pool.join()                                                                                                                                        
+            bboxes = []
+            for i,oq in enumerate(self.outputQueues):  
+                bboxes.append(oq.get())
+            
+            for i,bbox in enumerate(bboxes):
+                for j in range(self.__processor_task_num[i]):
+                    #print(bbox)
+                    (startX, startY, endX, endY) = bbox[j]
 
-                pool_output = pool.map(self.start_tracker, input_data)
-                #print(pool_output)
-     
-                #print("before operating cv2")
-                #print("len(pool_output):%d" % len(pool_output))
-                for i in range(len(pool_output)):
-                    #print(pool_output[i][0])
-                    #print(box)
-                    for j in range(self.__processor_task_num[i]):
-                        #print(pool_output[i][j])
-                        (startX, startY, endX, endY) = pool_output[i][j]
-                        cv2.rectangle(frame, (startX, startY), (endX, endY),(0, 255, 0), 2)
-                        cv2.putText(frame, "preson", (startX, startY - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
+                    cv2.rectangle(frame, (startX, startY), (endX, endY),(0, 255, 0), 2)
+                    cv2.putText(frame, "person", (startX, startY - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
 
             #print("before imshow")
             cv2.imshow("Frame", frame)
@@ -266,6 +254,4 @@ class mot_class():
         # do a bit of cleanup
         cv2.destroyAllWindows()
         vs.release()
-        pool.close()
-        pool.join()
 
